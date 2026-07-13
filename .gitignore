@@ -1,0 +1,10 @@
+# Build artifacts and deliverables (the model+app zip is ~500 MB — rebuilt by build.sh)
+dist/
+.build/
+/tmp/
+
+# macOS noise
+.DS_Store
+
+# Whisper model is downloaded by build.sh into ~/.cache/yellflow, never committed
+*.bin
