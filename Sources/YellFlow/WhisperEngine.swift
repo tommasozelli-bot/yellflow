@@ -40,6 +40,14 @@ final class WhisperEngine {
         // Ignore accidental taps (< 0.3 s of audio).
         guard samples.count >= 4_800 else { return "" }
 
+        // Energy gate: on true silence Whisper hallucinates plausible-looking
+        // sentences ("Sous-titrage Société Radio-Canada", "Grazie."…). Typical
+        // speech RMS is 0.02–0.1; ambient room noise sits well below 0.002.
+        var sumSquares: Float = 0
+        for s in samples { sumSquares += s * s }
+        let rms = (sumSquares / Float(samples.count)).squareRoot()
+        guard rms > 0.0015 else { return "" }
+
         // whisper_full rejects inputs shorter than ~1 s — pad with silence.
         var pcm = samples
         let minSamples = 17_600 // 1.1 s @ 16 kHz
@@ -56,6 +64,10 @@ final class WhisperEngine {
 
         // Beam search explores several hypotheses in parallel instead of committing
         // to the single most likely token — noticeably fewer misheard words than greedy.
+        // NOTE: do not be tempted by params.audio_ctx to speed up short clips —
+        // with beam search + carry_initial_prompt it makes the decoder loop and
+        // repeat itself, and the fallback retries end up SLOWER than the full
+        // 30 s window. Verified empirically.
         var params = whisper_full_default_params(WHISPER_SAMPLING_BEAM_SEARCH)
         params.beam_search.beam_size = 5
         // Keep the C strings alive for the whole whisper_full call, free afterwards.

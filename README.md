@@ -1,6 +1,6 @@
 # Yell Flow
 
-Local, offline dictation for macOS. **Hold the Right Option (⌥) key, speak, release** —
+Local, offline dictation for macOS. **Tap the Right Option (⌥) key, speak, tap again** —
 your words get typed wherever your cursor is, in any app. Nothing leaves your Mac.
 
 ---
@@ -34,14 +34,14 @@ Toggle **Yell Flow** on in each list. You may need to quit and reopen the app on
 ## Use it
 
 **Dictate** — put your cursor anywhere you can type (Notes, Mail, Slack, a browser field…):
-- **Hold Right ⌥**, say your sentence, **release**.
-- A yellow "REC" badge shows while you talk, then a spinner; the text appears a moment after
-  you release.
+- **Tap Right ⌥** once → recording starts (yellow "REC" badge on screen).
+- Say what you want, then **tap Right ⌥ again** → recording stops, a spinner shows while
+  it transcribes, and the text appears at your cursor.
 
 **Read aloud** — select any text in any app:
-- **Tap Right ⌥** (a quick press, don't hold) → Yell Flow reads the selection out loud.
+- **Double-tap Right ⌥** (two quick taps) → Yell Flow reads the selection out loud.
 - It detects the language automatically: Italian text gets an Italian voice, English an
-  English one. Tap again to stop.
+  English one. A single tap while it speaks stops it.
 
 Click the menu-bar mic icon to switch **Language (Auto / EN / IT)** for dictation and the
 **Voice (F / M)** for read-aloud, or to quit. **Auto** detects the spoken language from

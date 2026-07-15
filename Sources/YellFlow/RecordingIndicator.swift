@@ -36,6 +36,8 @@ final class RecordingIndicator {
             dot.layer?.removeAllAnimations()
             spinner.startAnimation(nil)
         }
+        // Re-anchor on every show — the active screen may have changed.
+        positionAtBottomCenter(panel)
         panel.orderFrontRegardless()
     }
 
@@ -47,12 +49,15 @@ final class RecordingIndicator {
             backing: .buffered,
             defer: false
         )
-        panel.level = .floating
+        // .statusBar level + .fullScreenAuxiliary: stay visible above regular
+        // windows AND above full-screen apps (VS Code full screen hid the badge
+        // at the old .floating level).
+        panel.level = .statusBar
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.ignoresMouseEvents = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
 
         // Dark square badge with a glowing yellow border (glow lives in the inset margin).
         let badge = NSView()

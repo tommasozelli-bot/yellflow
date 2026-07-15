@@ -2,9 +2,10 @@ import AVFoundation
 import CoreGraphics
 import Foundation
 
-/// Wires the engine together:
-/// hotkey press  -> start recording
-/// hotkey release -> stop, transcribe off the main thread, paste on the main thread.
+/// Wires the engine together. Gestures (presses of the hotkey, releases are ignored):
+///   single tap        -> start recording; next tap stops it and transcribes
+///   quick double tap  -> read the selected text aloud
+///   any tap while the synthetic voice is speaking -> stop it
 final class DictationController {
 
     enum State {
@@ -15,11 +16,15 @@ final class DictationController {
 
     /// Called on the main thread — hook the menu-bar UI here.
     var onStateChange: ((State) -> Void)?
-    /// A quick tap of the hotkey (too short to be a dictation) — read-aloud trigger.
-    var onTap: (() -> Void)?
+    /// Quick double tap of the hotkey — read-aloud trigger.
+    var onReadAloud: (() -> Void)?
     /// Fired right before the microphone opens (used to stop any ongoing speech
     /// so the mic doesn't transcribe our own synthetic voice).
     var onRecordingWillStart: (() -> Void)?
+    /// Read-aloud state, provided by the owner: a tap while speaking only stops
+    /// the voice instead of starting a recording.
+    var isSpeechActive: (() -> Bool)?
+    var onStopSpeech: (() -> Void)?
     var language: String
 
     private let engine: WhisperEngine
@@ -27,14 +32,21 @@ final class DictationController {
     private let hotkey: HotkeyManager
     private let transcribeQueue = DispatchQueue(label: "yellflow.transcribe", qos: .userInitiated)
     private var isRecording = false
-    private var lastEnd = Date.distantPast
+    private var recordingStartedAt = Date.distantPast
+    private var lastPress = Date.distantPast
+
+    /// Second press within this window = double tap (read-aloud).
+    private let doubleTapWindow: TimeInterval = 0.40
+    /// A single physical press can emit repeated flagsChanged events — ignore
+    /// anything faster than a human can tap twice.
+    private let bounceGuard: TimeInterval = 0.12
 
     init(engine: WhisperEngine, language: String = "auto", hotkeyCode: CGKeyCode = 61) {
         self.engine = engine
         self.language = language
         self.hotkey = HotkeyManager(keyCode: hotkeyCode)
-        hotkey.onPress = { [weak self] in self?.beginRecording() }
-        hotkey.onRelease = { [weak self] in self?.endRecording() }
+        // Toggle-style gestures: only key-down matters, releases are ignored.
+        hotkey.onPress = { [weak self] in self?.handlePress() }
     }
 
     func requestMicPermission(_ completion: @escaping (Bool) -> Void) {
@@ -46,8 +58,10 @@ final class DictationController {
     func warmUp() {
         transcribeQueue.async { [weak self] in
             guard let self else { return }
-            let silence = [Float](repeating: 0, count: 16_000)
-            _ = autoreleasepool { self.engine.transcribe(samples: silence, language: self.language) }
+            // Low-level noise, not zeros: real silence is rejected by the energy gate.
+            var noise = [Float](repeating: 0, count: 32_000)
+            for i in 0..<noise.count { noise[i] = Float.random(in: -0.02...0.02) }
+            _ = autoreleasepool { self.engine.transcribe(samples: noise, language: self.language) }
             Log.write("engine warmed up")
         }
     }
@@ -56,7 +70,7 @@ final class DictationController {
     /// (missing Accessibility / Input Monitoring permission).
     func start() throws {
         try hotkey.start()
-        Log.write("hotkey installed (Right Option)")
+        Log.write("hotkey installed (Right Option, tap-to-toggle)")
     }
 
     func stop() {
@@ -67,16 +81,40 @@ final class DictationController {
         }
     }
 
-    // MARK: - Push-to-talk flow
+    // MARK: - Gesture dispatch
 
-    private func beginRecording() {
-        guard !isRecording else { return } // ignore overlapping presses
-        // Debounce: a single physical tap of Right Option can emit repeated
-        // flagsChanged events — ignore a new start right after one just ended.
-        guard Date().timeIntervalSince(lastEnd) > 0.3 else {
-            Log.write("debounced spurious hotkey press")
+    private func handlePress() {
+        let now = Date()
+        guard now.timeIntervalSince(lastPress) > bounceGuard else { return }
+        lastPress = now
+
+        // Reading aloud? A tap just silences it.
+        if isSpeechActive?() == true {
+            onStopSpeech?()
+            Log.write("press: stopped read-aloud")
             return
         }
+
+        if isRecording {
+            if now.timeIntervalSince(recordingStartedAt) < doubleTapWindow {
+                // Double tap: the first press opened the mic by mistake —
+                // discard it and read the selection instead.
+                _ = recorder.stop()
+                isRecording = false
+                onStateChange?(.idle)
+                Log.write("double tap — read-aloud")
+                onReadAloud?()
+            } else {
+                finishRecording()
+            }
+        } else {
+            beginRecording()
+        }
+    }
+
+    // MARK: - Recording
+
+    private func beginRecording() {
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
             Log.write("mic not authorized yet — prompting, skipping this press")
             recorder.requestPermission { _ in }
@@ -86,6 +124,7 @@ final class DictationController {
             onRecordingWillStart?()
             try recorder.start()
             isRecording = true
+            recordingStartedAt = Date()
             onStateChange?(.recording)
             Log.write("recording started")
         } catch {
@@ -93,19 +132,16 @@ final class DictationController {
         }
     }
 
-    private func endRecording() {
+    private func finishRecording() {
         guard isRecording else { return }
         isRecording = false
-        lastEnd = Date()
         let samples = recorder.stop()
         let seconds = Double(samples.count) / 16_000
         Log.write("recorded \(samples.count) samples (\(String(format: "%.1f", seconds))s)")
 
-        // Too short to be dictation -> it was a TAP: the read-aloud gesture.
+        // Nothing meaningful was said — back to idle without spinning up Whisper.
         guard samples.count >= 6_400 else { // 0.4 s
-            Log.write("tap gesture (\(samples.count) samples) — read-aloud")
             onStateChange?(.idle)
-            onTap?()
             return
         }
         onStateChange?(.transcribing)
@@ -115,10 +151,11 @@ final class DictationController {
         let watchdog = DispatchWorkItem { [weak self] in
             guard let self, !completed else { return }
             Log.write("⚠️ transcription watchdog fired — resetting UI to idle")
-            self.onStateChange?(.idle)
+            if !self.isRecording { self.onStateChange?(.idle) }
         }
-        // Scale the timeout with recording length: transcription runs ~10x faster
-        // than real time, so this stays generous even for very long dictations.
+        // Scale the timeout with recording length: transcription runs several
+        // times faster than real time, so this stays generous even for very
+        // long dictations.
         let watchdogTimeout = max(30.0, seconds * 2.0)
         DispatchQueue.main.asyncAfter(deadline: .now() + watchdogTimeout, execute: watchdog)
 
@@ -133,7 +170,9 @@ final class DictationController {
             DispatchQueue.main.async {
                 completed = true
                 watchdog.cancel()
-                self.onStateChange?(.idle)
+                // A new recording may have started while we were transcribing —
+                // don't yank its UI back to idle.
+                if !self.isRecording { self.onStateChange?(.idle) }
                 guard !text.isEmpty else {
                     Log.write("empty transcript — nothing to paste")
                     return

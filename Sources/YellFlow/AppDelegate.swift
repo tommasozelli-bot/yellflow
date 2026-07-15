@@ -98,26 +98,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Read-aloud wiring
 
     private func setupReadAloud() {
-        controller?.onTap = { [weak self] in self?.handleTap() }
+        controller?.onReadAloud = { [weak self] in self?.handleReadAloud() }
         controller?.onRecordingWillStart = { [weak self] in self?.speech.stop() }
+        controller?.isSpeechActive = { [weak self] in self?.speech.isSpeaking ?? false }
+        controller?.onStopSpeech = { [weak self] in self?.speech.stop() }
         speech.onStateChange = { [weak self] speaking in self?.setSpeaking(speaking) }
     }
 
-    /// Tap of Right ⌥: read the selected text aloud — or stop if already speaking.
-    private func handleTap() {
-        if speech.isSpeaking {
-            speech.stop()
-            Log.write("tap: stopped speech")
-            return
-        }
-        // Grabbing the selection can wait up to ~0.9 s (⌘C fallback in Electron
-        // apps) — never block the main thread for that.
+    /// Double tap of Right ⌥: read the selected text aloud.
+    private func handleReadAloud() {
+        // Grabbing the selection can wait over a second (⌘C fallback in
+        // Electron apps) — never block the main thread for that.
         selectionQueue.async { [weak self] in
             let text = SelectionReader.selectedText()
             DispatchQueue.main.async {
                 guard let self else { return }
                 guard let text else {
-                    Log.write("tap: no selected text — nothing to read")
+                    Log.write("read-aloud: no selected text — nothing to read")
                     return
                 }
                 self.speech.speak(text, fallbackLanguage: Preferences.language)

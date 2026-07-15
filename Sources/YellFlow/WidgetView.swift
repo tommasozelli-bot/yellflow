@@ -129,13 +129,13 @@ final class WidgetViewController: NSViewController {
 
     private func applyLanguage() {
         if isItalian {
-            howtoLabel.stringValue = "Tieni ⌥ destro: detti, il testo appare al cursore.\nTap su ⌥ con testo selezionato: lo legge."
+            howtoLabel.stringValue = "Tocca ⌥ destro: registra. Altro tocco: stop,\nil testo appare al cursore.\nDoppio tocco con testo selezionato: lo legge."
             languageCaption.stringValue = "Lingua"
             voiceCaption.stringValue = "Voce"
             permissionButton.title = "Apri Impostazioni"
             quitButton.title = "Esci"
         } else {
-            howtoLabel.stringValue = "Hold Right ⌥: dictate, text lands at your cursor.\nTap ⌥ with text selected: hear it out loud."
+            howtoLabel.stringValue = "Tap Right ⌥: record. Tap again: stop,\ntext lands at your cursor.\nDouble-tap with text selected: hear it aloud."
             languageCaption.stringValue = "Language"
             voiceCaption.stringValue = "Voice"
             permissionButton.title = "Open Settings"
