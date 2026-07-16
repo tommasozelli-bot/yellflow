@@ -70,7 +70,7 @@ func runSelfTest(modelPath: String, wavPath: String, language: String, backgroun
             let samples = try loadAudioFileAs16kMono(url: URL(fileURLWithPath: wavPath))
             print("Loaded \(samples.count) samples (\(String(format: "%.1f", Double(samples.count) / 16_000))s)")
             let raw = engine.transcribe(samples: samples, language: language, vocabulary: Vocabulary.prompt())
-            print("Transcript: \(TextCleanup.clean(raw))")
+            print("Transcript: \(Corrections.apply(TextCleanup.clean(raw)))")
             return raw.isEmpty ? 2 : 0
         } catch {
             print("❌ Self-test failed: \(error)")
@@ -93,7 +93,7 @@ func runSelfTest(modelPath: String, wavPath: String, language: String, backgroun
     DispatchQueue.global(qos: qos).async {
         let raw = engine.transcribe(samples: samples, language: language, vocabulary: Vocabulary.prompt())
         DispatchQueue.main.async {
-            print("Transcript: \(TextCleanup.clean(raw))  [\(String(format: "%.1f", Date().timeIntervalSince(t0)))s, qos=\(qosName)]")
+            print("Transcript: \(Corrections.apply(TextCleanup.clean(raw)))  [\(String(format: "%.1f", Date().timeIntervalSince(t0)))s, qos=\(qosName)]")
             finished = true
             CFRunLoopStop(CFRunLoopGetMain())
         }

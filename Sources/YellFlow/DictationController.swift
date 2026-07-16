@@ -25,6 +25,8 @@ final class DictationController {
     /// the voice instead of starting a recording.
     var isSpeechActive: (() -> Bool)?
     var onStopSpeech: (() -> Void)?
+    /// Live microphone RMS level (0…1), forwarded from the recorder to drive the UI waveform.
+    var onLevel: ((Float) -> Void)?
     var language: String
 
     private let engine: WhisperEngine
@@ -47,6 +49,7 @@ final class DictationController {
         self.hotkey = HotkeyManager(keyCode: hotkeyCode)
         // Toggle-style gestures: only key-down matters, releases are ignored.
         hotkey.onPress = { [weak self] in self?.handlePress() }
+        recorder.onLevel = { [weak self] rms in self?.onLevel?(rms) }
     }
 
     func requestMicPermission(_ completion: @escaping (Bool) -> Void) {
@@ -165,7 +168,9 @@ final class DictationController {
             let raw = autoreleasepool {
                 self.engine.transcribe(samples: samples, language: self.language, vocabulary: Vocabulary.prompt())
             }
-            let text = TextCleanup.clean(raw)
+            // TextCleanup tidies the edges; Corrections then guarantees the spelling
+            // of recurring names/jargon (proper nouns, pull request…) from corrections.txt.
+            let text = Corrections.apply(TextCleanup.clean(raw))
             Log.write("transcribed in \(String(format: "%.1f", Date().timeIntervalSince(start)))s: \"\(text)\"")
             DispatchQueue.main.async {
                 completed = true
@@ -177,6 +182,9 @@ final class DictationController {
                     Log.write("empty transcript — nothing to paste")
                     return
                 }
+                // Save to history BEFORE pasting: inject() has no success signal, so
+                // if the focus was stolen the text stays recoverable from the widget.
+                TranscriptStore.add(text)
                 TextInjector.inject(text)
                 Log.write("pasted \(text.count) characters")
             }

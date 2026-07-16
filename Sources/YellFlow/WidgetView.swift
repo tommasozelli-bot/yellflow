@@ -16,10 +16,16 @@ final class WidgetViewController: NSViewController {
     private let permissionRow = NSStackView()
     private let permissionLabel = NSTextField(labelWithString: "")
     private let permissionButton = NSButton(title: "", target: nil, action: nil)
+    private let historyTitle = NSTextField(labelWithString: "")
+    private let historyScroll = NSScrollView()
+    private let historyStack = NSStackView()
+    private let historyEmptyLabel = NSTextField(labelWithString: "")
     private let quitButton = NSButton(title: "", target: nil, action: nil)
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 272, height: 244))
+        // Taller than the base widget to fit the scrollable history section.
+        // The popover ultimately sizes to the pinned stack's fitting height.
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 272, height: 456))
         root.wantsLayer = true
         root.layer?.backgroundColor = NSColor.yellFlowInk.cgColor
         view = root
@@ -81,6 +87,32 @@ final class WidgetViewController: NSViewController {
         permissionRow.addArrangedSubview(permissionLabel)
         permissionRow.addArrangedSubview(permissionButton)
 
+        historyTitle.font = .systemFont(ofSize: 13, weight: .medium)
+        historyTitle.textColor = .yellFlowText
+
+        historyStack.orientation = .vertical
+        historyStack.alignment = .leading
+        historyStack.spacing = 8
+        historyStack.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
+        historyStack.translatesAutoresizingMaskIntoConstraints = false
+
+        historyEmptyLabel.font = .systemFont(ofSize: 12)
+        historyEmptyLabel.textColor = .yellFlowDim
+
+        historyScroll.hasVerticalScroller = true
+        historyScroll.drawsBackground = false
+        historyScroll.borderType = .noBorder
+        historyScroll.automaticallyAdjustsContentInsets = false
+        historyScroll.translatesAutoresizingMaskIntoConstraints = false
+        historyScroll.documentView = historyStack
+        let clip = historyScroll.contentView
+        NSLayoutConstraint.activate([
+            historyStack.leadingAnchor.constraint(equalTo: clip.leadingAnchor),
+            historyStack.trailingAnchor.constraint(equalTo: clip.trailingAnchor),
+            historyStack.topAnchor.constraint(equalTo: clip.topAnchor),
+            historyStack.widthAnchor.constraint(equalTo: clip.widthAnchor)
+        ])
+
         quitButton.target = self
         quitButton.action = #selector(quit)
         quitButton.isBordered = false
@@ -89,7 +121,8 @@ final class WidgetViewController: NSViewController {
         quitButton.font = .systemFont(ofSize: 13, weight: .medium)
 
         let stack = NSStackView(views: [
-            titleLabel, hairline(), howtoLabel, langRow, voiceRow, permissionRow, hairline(), quitButton
+            titleLabel, hairline(), howtoLabel, langRow, voiceRow, permissionRow,
+            hairline(), historyTitle, historyScroll, hairline(), quitButton
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -103,10 +136,13 @@ final class WidgetViewController: NSViewController {
             stack.topAnchor.constraint(equalTo: view.topAnchor),
             stack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             langRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
-            voiceRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36)
+            voiceRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
+            historyScroll.widthAnchor.constraint(equalToConstant: 236),
+            historyScroll.heightAnchor.constraint(equalToConstant: 160)
         ])
 
         applyLanguage()
+        refreshHistory()
     }
 
     /// Refresh the permission nudge each time the widget appears.
@@ -121,6 +157,33 @@ final class WidgetViewController: NSViewController {
             let prefix = isItalian ? "Concedi: " : "Grant: "
             permissionLabel.stringValue = prefix + missing.joined(separator: ", ")
         }
+        // The popover re-runs this on every open — rebuild the history too.
+        refreshHistory()
+    }
+
+    /// Rebuild the history list from the persistent store (most recent first).
+    /// Cleared and reconstructed each time so it never shows stale rows.
+    private func refreshHistory() {
+        historyStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+
+        let entries = TranscriptStore.recent(limit: 50)
+        if entries.isEmpty {
+            historyEmptyLabel.stringValue = isItalian ? "Nessuna trascrizione ancora" : "No transcriptions yet"
+            historyStack.addArrangedSubview(historyEmptyLabel)
+            historyEmptyLabel.widthAnchor.constraint(equalTo: historyStack.widthAnchor).isActive = true
+            return
+        }
+
+        for (i, entry) in entries.enumerated() {
+            if i > 0 {
+                let divider = historyDivider()
+                historyStack.addArrangedSubview(divider)
+                divider.widthAnchor.constraint(equalTo: historyStack.widthAnchor).isActive = true
+            }
+            let row = HistoryRow(entry: entry, italian: isItalian)
+            historyStack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: historyStack.widthAnchor).isActive = true
+        }
     }
 
     // MARK: - Localization
@@ -132,12 +195,14 @@ final class WidgetViewController: NSViewController {
             howtoLabel.stringValue = "Tocca ⌥ destro: registra. Altro tocco: stop,\nil testo appare al cursore.\nDoppio tocco con testo selezionato: lo legge."
             languageCaption.stringValue = "Lingua"
             voiceCaption.stringValue = "Voce"
+            historyTitle.stringValue = "Cronologia"
             permissionButton.title = "Apri Impostazioni"
             quitButton.title = "Esci"
         } else {
             howtoLabel.stringValue = "Tap Right ⌥: record. Tap again: stop,\ntext lands at your cursor.\nDouble-tap with text selected: hear it aloud."
             languageCaption.stringValue = "Language"
             voiceCaption.stringValue = "Voice"
+            historyTitle.stringValue = "History"
             permissionButton.title = "Open Settings"
             quitButton.title = "Quit"
         }
@@ -195,5 +260,86 @@ final class WidgetViewController: NSViewController {
         iv.translatesAutoresizingMaskIntoConstraints = false
         iv.widthAnchor.constraint(equalToConstant: 18).isActive = true
         return iv
+    }
+
+    /// A hairline whose width is pinned by the caller (used between history rows).
+    private func historyDivider() -> NSView {
+        let line = NSView()
+        line.wantsLayer = true
+        line.layer?.backgroundColor = NSColor.yellFlowHair.cgColor
+        line.translatesAutoresizingMaskIntoConstraints = false
+        line.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        return line
+    }
+}
+
+// MARK: - History row
+
+/// One transcription in the history list: time + a 2-line preview.
+/// Clicking copies the full text to the pasteboard with a brief confirmation.
+private final class HistoryRow: NSView {
+
+    private let full: String
+    private let italian: Bool
+    private let timeLabel = NSTextField(labelWithString: "")
+    private let previewLabel = NSTextField(wrappingLabelWithString: "")
+    private var restoreWork: DispatchWorkItem?
+
+    init(entry: TranscriptStore.Entry, italian: Bool) {
+        self.full = entry.text
+        self.italian = italian
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+
+        let df = DateFormatter()
+        df.dateFormat = "HH:mm"
+        timeLabel.stringValue = df.string(from: entry.date)
+        timeLabel.font = .yellFlowMono(10, .regular)
+        timeLabel.textColor = .yellFlowDim
+
+        previewLabel.stringValue = entry.text
+        previewLabel.font = .systemFont(ofSize: 12)
+        previewLabel.textColor = .yellFlowText
+        previewLabel.maximumNumberOfLines = 2
+        previewLabel.lineBreakMode = .byTruncatingTail
+        previewLabel.cell?.truncatesLastVisibleLine = true
+
+        let content = NSStackView(views: [timeLabel, previewLabel])
+        content.orientation = .vertical
+        content.alignment = .leading
+        content.spacing = 2
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor),
+            content.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3)
+        ])
+
+        addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(copyText)))
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    @objc private func copyText() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(full, forType: .string)
+
+        // Brief confirmation, then restore the original preview.
+        previewLabel.stringValue = italian ? "Copiato ✓" : "Copied ✓"
+        previewLabel.textColor = .yellFlow
+        restoreWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.previewLabel.stringValue = self.full
+            self.previewLabel.textColor = .yellFlowText
+        }
+        restoreWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9, execute: work)
     }
 }

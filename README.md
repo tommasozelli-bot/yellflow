@@ -38,33 +38,96 @@ Toggle **Yell Flow** on in each list. You may need to quit and reopen the app on
 - Say what you want, then **tap Right ⌥ again** → recording stops, a spinner shows while
   it transcribes, and the text appears at your cursor.
 
+While recording, a floating **pill with a live waveform** appears at the bottom of the
+screen (visible even over full-screen apps), so you always know it's listening.
+
 **Read aloud** — select any text in any app:
 - **Double-tap Right ⌥** (two quick taps) → Yell Flow reads the selection out loud.
 - It detects the language automatically: Italian text gets an Italian voice, English an
   English one. A single tap while it speaks stops it.
 
 Click the menu-bar mic icon to switch **Language (Auto / EN / IT)** for dictation and the
-**Voice (F / M)** for read-aloud, or to quit. **Auto** detects the spoken language from
-the audio; picking EN or IT just tells the model what to expect — mixed-in words from
-the other language are still transcribed as heard.
+**Voice (F / M)** for read-aloud, see your **history**, or quit. **Auto** detects the spoken
+language from the audio; picking EN or IT just tells the model what to expect — mixed-in
+words from the other language are still transcribed as heard.
 
-## Custom vocabulary (optional)
+## History (never lose a dictation)
 
-Yell Flow can be biased towards words it would otherwise mishear — names, brands,
-technical jargon, English terms you drop into Italian sentences. On first dictation it
-creates:
+Every transcription is saved locally. Sometimes the focus is stolen (a desktop click, a
+slow app) and the typed text doesn't land where you wanted — open the menu-bar widget and
+you'll find your recent dictations under **History**. Click any entry to copy it back to
+the clipboard. History is local only, capped to the most recent entries, and never leaves
+your Mac.
+
+## Personalizing accuracy — the two context files (important)
+
+Because Yell Flow runs **entirely offline**, its accuracy on *your* words — names, brands,
+jargon, English terms inside Italian — depends on two plain-text files you control. Both
+live next to the app's data and **hot-reload**: edit, save, and the very next dictation
+uses them. No restart.
 
 ```
-~/Library/Application Support/YellFlow/vocabulary.txt
+~/Library/Application Support/YellFlow/vocabulary.txt    # soft phonetic bias
+~/Library/Application Support/YellFlow/corrections.txt   # guaranteed fixes
 ```
 
-Open it in any text editor and add **one word or phrase per line** (lines starting with
-`#` are comments). Saved changes apply to the very next dictation — no restart needed.
-The file is personal and lives outside the app and outside this repository.
+**`vocabulary.txt`** — one word/phrase per line. These *nudge* the model to "hear" a term
+it might otherwise miss (e.g. a surname, a product name). It's only a hint, and it must
+stay **short** — Whisper only keeps ~224 tokens of it, so list a handful of genuinely
+tricky words, not everything.
+
+**`corrections.txt`** — one rule per line as `wrong => right`. Applied **after**
+transcription, so it's deterministic and **unlimited**: whatever the model writes, these
+rules rewrite it. This is where recurring names belong — the guaranteed way to make them
+always come out right. Example:
+
+```
+git hub => GitHub
+push a request => pull request
+back end => backend
+```
+
+Rule of thumb: put a few hard-to-hear words in `vocabulary.txt`; put every name that
+*must* be spelled correctly in `corrections.txt`. Both files are created (commented, with
+examples) on first run, are personal, and are **not** part of this repository.
 
 ## Notes
 
 - 100% on-device (whisper.cpp, `large-v3-turbo` quantized model, ~550 MB). Works with
   no internet.
-- Your clipboard is never touched — text is typed directly at the cursor.
+- Your clipboard is never touched by dictation — text is typed directly at the cursor.
 - Apple Silicon recommended; also runs on Intel Macs.
+
+---
+
+## Build from source
+
+No Xcode required — Command Line Tools only. The app bundle is assembled by hand.
+
+**Requirements:** macOS 13.3+, Xcode Command Line Tools (`xcode-select --install`).
+
+```bash
+# 1. (once) create a stable local signing identity so macOS permission grants
+#    survive rebuilds — otherwise you'd re-grant Mic/Accessibility every build.
+bash setup-signing.sh
+
+# 2. build: compiles universal (arm64+x86_64), downloads the whisper model
+#    (~547 MB, cached in ~/.cache/yellflow), assembles "Yell Flow.app",
+#    installs it to /Applications, and writes dist/Yell Flow.zip
+bash build.sh
+```
+
+The whisper model is **not** committed — `build.sh` fetches
+`ggml-large-v3-turbo-q5_0` from Hugging Face on first build. `whisper.cpp` ships in the
+repo as the prebuilt `vendor/whisper.xcframework` (Metal-enabled, universal).
+
+**Project layout:** `Sources/YellFlow/` — `AudioRecorder` (mic capture + live level),
+`WhisperEngine` (whisper.cpp wrapper, beam search), `DictationController` (gesture/state
+machine), `RecordingIndicator` (waveform pill), `WidgetView` (menu-bar popover + history),
+`Vocabulary`/`Corrections`/`TranscriptStore` (the context and history layers).
+
+## Credits & license
+
+Speech recognition by [whisper.cpp](https://github.com/ggerganov/whisper.cpp) and
+[ggml](https://github.com/ggerganov/ggml) (MIT). Yell Flow is released under the MIT
+license — see [LICENSE](LICENSE).

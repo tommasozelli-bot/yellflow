@@ -207,6 +207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.engine = engine
             let controller = DictationController(engine: engine, language: Preferences.language)
             controller.onStateChange = { [weak self] state in self?.setState(state) }
+            controller.onLevel = { [weak self] rms in self?.indicator.updateLevel(rms) }
             self.controller = controller
             Log.write("engine loaded from \(path)")
         } catch {

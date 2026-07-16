@@ -27,6 +27,11 @@ final class AudioRecorder {
     private var samples: [Float] = []
     private(set) var isRunning = false
 
+    /// Fires ~10-20x/s with the RMS level (0…1) of each converted buffer,
+    /// always marshaled to main so the UI can drive a live waveform.
+    /// The RMS math runs on the audio thread; only the callback hops to main.
+    var onLevel: ((Float) -> Void)?
+
     // MARK: - Permission
 
     func requestPermission(_ completion: @escaping (Bool) -> Void) {
@@ -132,6 +137,18 @@ final class AudioRecorder {
         }
         guard status != .error, error == nil else { return }
         append(out)
+        emitLevel(out)
+    }
+
+    /// Computes the RMS of a converted buffer and reports it on main.
+    private func emitLevel(_ buffer: AVAudioPCMBuffer) {
+        guard let onLevel, buffer.frameLength > 0, let channel = buffer.floatChannelData else { return }
+        let count = Int(buffer.frameLength)
+        let ptr = UnsafeBufferPointer(start: channel[0], count: count)
+        var sum: Float = 0
+        for sample in ptr { sum += sample * sample }
+        let rms = (sum / Float(count)).squareRoot()
+        DispatchQueue.main.async { onLevel(rms) }
     }
 
     private func append(_ buffer: AVAudioPCMBuffer) {
