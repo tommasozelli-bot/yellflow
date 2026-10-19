@@ -69,7 +69,12 @@ func runSelfTest(modelPath: String, wavPath: String, language: String, backgroun
             let engine = try WhisperEngine(modelPath: modelPath)
             let samples = try loadAudioFileAs16kMono(url: URL(fileURLWithPath: wavPath))
             print("Loaded \(samples.count) samples (\(String(format: "%.1f", Double(samples.count) / 16_000))s)")
-            let raw = engine.transcribe(samples: samples, language: language, vocabulary: Vocabulary.prompt())
+            var raw = ""
+            for pass in ["cold", "warm"] {
+                let t0 = Date()
+                raw = engine.transcribe(samples: samples, language: language, vocabulary: Vocabulary.prompt())
+                print("\(pass): \(String(format: "%.2f", Date().timeIntervalSince(t0)))s")
+            }
             print("Transcript: \(Corrections.apply(TextCleanup.clean(raw)))")
             return raw.isEmpty ? 2 : 0
         } catch {

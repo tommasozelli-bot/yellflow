@@ -59,7 +59,9 @@ enum Corrections {
         var result = text
         for rule in rules {
             let escaped = NSRegularExpression.escapedPattern(for: rule.wrong)
-            let pattern = "\\b\(escaped)\\b"
+            // Whole word, and never inside an email address or a domain name:
+            // "acme" must not rewrite "you@acme.com".
+            let pattern = "(?<![\\w@.])\(escaped)(?!\\w)(?![.@]\\w)"
             guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { continue }
             let range = NSRange(result.startIndex..., in: result)
             // Escape $ and \ so the replacement is used literally, not as a template.

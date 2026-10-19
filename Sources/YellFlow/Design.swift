@@ -37,8 +37,12 @@ enum YellFlowLayout {
     static let waveformMaxHeight: CGFloat = 0.86
     /// Smoothing factor per frame for bar heights (0 = frozen, 1 = instant).
     static let waveformSmoothing: CGFloat = 0.35
-    /// How hard the RMS is boosted before clamping (voice RMS is small).
-    static let waveformGain: Float = 6.0
+    /// Level mapping in dBFS: at or below the floor = idle bar, at or above
+    /// the ceiling = full bar. Room noise ≈ -60, normal voice -40…-20.
+    static let waveformFloorDB: Float = -55
+    static let waveformCeilDB: Float = -18
+    /// Height of the idle "breathing" wave shown while the mic is open.
+    static let waveformBreath: CGFloat = 0.10
     /// Cross-fade duration for the recording <-> transcribing transition.
     static let stateFade: TimeInterval = 0.25
     /// Dot/bar pulse cadence.

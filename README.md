@@ -91,11 +91,44 @@ Rule of thumb: put a few hard-to-hear words in `vocabulary.txt`; put every name 
 *must* be spelled correctly in `corrections.txt`. Both files are created (commented, with
 examples) on first run, are personal, and are **not** part of this repository.
 
+Corrections never touch email addresses or domain names (`acme` won't rewrite
+`you@acme.com`).
+
+**Replaying a misheard word.** The audio of your **last dictation** is kept as
+`~/Library/Application Support/YellFlow/last-recording.wav` (overwritten every time,
+never leaves your Mac). If a word came out wrong you can run it through the engine again
+after adding a rule or a term:
+
+```bash
+"/Applications/Yell Flow.app/Contents/MacOS/YellFlow" \
+  --model "/Applications/Yell Flow.app/Contents/Resources/whisper-model.bin" \
+  --wav ~/Library/Application\ Support/YellFlow/last-recording.wav --lang auto
+```
+
+## How it stays fast
+
+Whisper's cost is per 30-second window and the model on an 8 GB Mac gets paged out
+after a few idle minutes (that alone used to add 4–6 s to the next dictation). Yell Flow
+hides all of that behind the recording itself:
+
+- **Warm-up while you talk** — if the engine has been idle, it's woken up the moment you
+  tap REC, not when you tap stop.
+- **Pieces while you talk** — long dictations are cut at your pauses (never mid-word)
+  into ≤ 28 s pieces, and each piece is transcribed while you keep talking. At the final
+  tap only the tail is left: roughly one window (~1.5 s) whatever the length.
+- **Language detection in the background** — in Auto mode the language is detected on
+  the first 8 s of speech during the recording; very short dictations reuse the last
+  detected language. (A wrong hint doesn't hurt: `large-v3-turbo` follows the audio.)
+
 ## Notes
 
 - 100% on-device (whisper.cpp, `large-v3-turbo` quantized model, ~550 MB). Works with
   no internet.
-- Your clipboard is never touched by dictation — text is typed directly at the cursor.
+- Text is pasted at the cursor (⌘V). Your clipboard is put back 1.5 s later, unless you
+  copied something else in the meantime, and the dictation is marked transient so
+  clipboard managers don't record it.
+- A Silero voice-activity detector (~1 MB, bundled) skips pieces with no speech, so
+  silence never turns into invented text ("Thank you.", "Grazie.").
 - Apple Silicon recommended; also runs on Intel Macs.
 
 ---
@@ -122,9 +155,15 @@ The whisper model is **not** committed — `build.sh` fetches
 repo as the prebuilt `vendor/whisper.xcframework` (Metal-enabled, universal).
 
 **Project layout:** `Sources/YellFlow/` — `AudioRecorder` (mic capture + live level),
-`WhisperEngine` (whisper.cpp wrapper, beam search), `DictationController` (gesture/state
-machine), `RecordingIndicator` (waveform pill), `WidgetView` (menu-bar popover + history),
-`Vocabulary`/`Corrections`/`TranscriptStore` (the context and history layers).
+`WhisperEngine` (whisper.cpp wrapper, beam search, cheap language detection),
+`AudioChunker` (cuts long takes at pauses), `DictationController` (gesture/state machine,
+streaming pieces, warm-up), `RecordingIndicator` (waveform pill), `WidgetView` (menu-bar
+popover + history), `Vocabulary`/`Corrections`/`TranscriptStore` (the context and history
+layers), `WavWriter` (keeps the last recording for replays).
+
+**Self-test / benchmark** (no permissions needed): `YellFlow --model M.bin --wav A.wav
+[--lang auto|it|en]` transcribes a file twice and prints cold/warm timings.
+`YELLFLOW_BEAM=n` overrides the beam size for experiments.
 
 ## Credits & license
 

@@ -188,25 +188,37 @@ final class WaveformView: NSView {
     }
 
     /// Pushes a fresh RMS level (0…1) as the newest (right-most) bar.
+    ///
+    /// Mapped in decibels, not linearly: a voice on the MacBook mic sits at
+    /// RMS 0.01–0.05, which the old linear ×6 gain turned into bars 6–30%
+    /// tall, so the pill looked frozen while you talked (Oct 2026).
     func push(_ level: Float) {
-        let boosted = min(max(level * YellFlowLayout.waveformGain, 0), 1)
-        let norm = idle + CGFloat(boosted) * (maxH - idle)
+        let db = 20 * log10(max(level, 1e-6))
+        let lo = YellFlowLayout.waveformFloorDB, hi = YellFlowLayout.waveformCeilDB
+        let loud = CGFloat(min(max((db - lo) / (hi - lo), 0), 1))
+        // A little per-bar variation so speech reads as a wave, not a block.
+        let norm = idle + loud * (maxH - idle) * CGFloat.random(in: 0.75...1.0)
         targets.removeFirst()
         targets.append(norm)
         if timer == nil { start() }   // tolerate levels arriving before start()
     }
 
+    private var phase: CGFloat = 0
+
     /// One animation frame: ease each bar toward its target, then redraw.
+    /// In silence the bars keep breathing in a slow travelling wave, so it is
+    /// always clear the mic is open.
     private func tick() {
         let s = YellFlowLayout.waveformSmoothing
-        var moved = false
+        phase += 0.08
         for i in 0..<barCount {
-            let delta = targets[i] - current[i]
-            if abs(delta) > 0.001 { current[i] += delta * s; moved = true }
+            let breath = idle + YellFlowLayout.waveformBreath * (1 + sin(phase - CGFloat(i) * 0.45)) / 2
+            let goal = max(targets[i], breath)
+            current[i] += (goal - current[i]) * s
             // Bars drift back to idle when no fresh levels arrive.
-            targets[i] += (idle - targets[i]) * 0.04
+            targets[i] += (idle - targets[i]) * 0.06
         }
-        if moved { needsDisplay = true }
+        needsDisplay = true
     }
 
     // MARK: - Draw

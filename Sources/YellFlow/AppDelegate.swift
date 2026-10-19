@@ -30,18 +30,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Log.write("launch — log at \(Log.path)")
         setupStatusItem()
         setupPopover()
-        loadEngine()
-        setupReadAloud()
-
         requestAllPermissions()
-        controller?.warmUp()
-        startHotkeyIfPossible()
+        loadEngine()
     }
 
     /// Fire the system prompts for all three permissions on first launch, each of
     /// which deep-links the user straight to the right toggle.
     private func requestAllPermissions() {
-        controller?.requestMicPermission { granted in Log.write("microphone granted: \(granted)") }
+        AudioRecorder().requestPermission { granted in Log.write("microphone granted: \(granted)") }
         // Accessibility (needed to paste into other apps): shows the system dialog.
         let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         Log.write("accessibility trusted: \(AXIsProcessTrustedWithOptions(prompt))")
@@ -196,22 +192,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Engine wiring
 
+    /// Loads the model off the main thread: with the Core ML encoder the very
+    /// first launch compiles it (~45 s) and the menu bar must not freeze. The
+    /// spinner shows until the engine is ready; hotkey and warm-up follow.
     private func loadEngine() {
         guard let path = modelPath() else {
             showFatal("Model not found",
                       "whisper-model.bin is missing from the app bundle. Rebuild with build.sh.")
             return
         }
-        do {
-            let engine = try WhisperEngine(modelPath: path)
-            self.engine = engine
-            let controller = DictationController(engine: engine, language: Preferences.language)
-            controller.onStateChange = { [weak self] state in self?.setState(state) }
-            controller.onLevel = { [weak self] rms in self?.indicator.updateLevel(rms) }
-            self.controller = controller
-            Log.write("engine loaded from \(path)")
-        } catch {
-            showFatal("Could not load the model", "\(error)")
+        setMenuSpinner(true)
+        let start = Date()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                let engine = try WhisperEngine(modelPath: path)
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.engine = engine
+                    let controller = DictationController(engine: engine, language: Preferences.language)
+                    controller.onStateChange = { [weak self] state in self?.setState(state) }
+                    controller.onLevel = { [weak self] rms in self?.indicator.updateLevel(rms) }
+                    self.controller = controller
+                    Log.write("engine loaded in \(String(format: "%.1f", Date().timeIntervalSince(start)))s, encoder: \(engine.encoderBackend)")
+                    self.setMenuSpinner(false)
+                    self.setupReadAloud()
+                    controller.warmUp()
+                    self.startHotkeyIfPossible()
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self?.setMenuSpinner(false)
+                    self?.showFatal("Could not load the model", "\(error)")
+                }
+            }
         }
     }
 
