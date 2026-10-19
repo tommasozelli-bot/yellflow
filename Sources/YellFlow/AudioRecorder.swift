@@ -82,8 +82,18 @@ final class AudioRecorder {
         isRunning = true
     }
 
-    /// Stops the engine and returns everything recorded since `start()`,
-    /// as 16 kHz mono Float32 in [-1, 1].
+    /// Hands over what has been captured since the last `take()`/`start()`
+    /// WITHOUT stopping — the controller transcribes long dictations piece by
+    /// piece while the user is still talking.
+    func take() -> [Float] {
+        lock.lock(); defer { lock.unlock() }
+        let out = samples
+        samples.removeAll(keepingCapacity: true)
+        return out
+    }
+
+    /// Stops the engine and returns everything recorded since the last
+    /// `take()`/`start()`, as 16 kHz mono Float32 in [-1, 1].
     func stop() -> [Float] {
         guard isRunning else {
             lock.lock(); defer { lock.unlock() }
