@@ -11,11 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var engine: WhisperEngine?
     private var controller: DictationController?
-    private let speech = SpeechEngine()
-    private let selectionQueue = DispatchQueue(label: "yellflow.selection", qos: .userInitiated)
-    private var spaceMonitors: [Any] = []
     private var hotkeyActive = false
-    private var lastState: DictationController.State = .idle
 
     private lazy var menuSpinner: NSProgressIndicator = {
         let spinner = NSProgressIndicator()
@@ -30,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Log.write("launch — log at \(Log.path)")
         setupStatusItem()
         setupPopover()
+        ClipboardHistory.start()
         requestAllPermissions()
         loadEngine()
     }
@@ -91,65 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // MARK: - Read-aloud wiring
-
-    private func setupReadAloud() {
-        controller?.onReadAloud = { [weak self] in self?.handleReadAloud() }
-        controller?.onRecordingWillStart = { [weak self] in self?.speech.stop() }
-        controller?.isSpeechActive = { [weak self] in self?.speech.isSpeaking ?? false }
-        controller?.onStopSpeech = { [weak self] in self?.speech.stop() }
-        speech.onStateChange = { [weak self] speaking in self?.setSpeaking(speaking) }
-    }
-
-    /// Double tap of Right ⌥: read the selected text aloud.
-    private func handleReadAloud() {
-        // Grabbing the selection can wait over a second (⌘C fallback in
-        // Electron apps) — never block the main thread for that.
-        selectionQueue.async { [weak self] in
-            let text = SelectionReader.selectedText()
-            DispatchQueue.main.async {
-                guard let self else { return }
-                guard let text else {
-                    Log.write("read-aloud: no selected text — nothing to read")
-                    return
-                }
-                self.speech.speak(text, fallbackLanguage: Preferences.language)
-            }
-        }
-    }
-
-    /// While speech is playing, pressing SPACE anywhere kills it outright.
-    private func updateSpaceMonitor(active: Bool) {
-        if active && spaceMonitors.isEmpty {
-            if let global = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
-                if event.keyCode == 49 { // space
-                    self?.speech.stop()
-                    Log.write("space pressed — speech terminated")
-                }
-            }) { spaceMonitors.append(global) }
-            if let local = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
-                if event.keyCode == 49 { self?.speech.stop() }
-                return event
-            }) { spaceMonitors.append(local) }
-        } else if !active {
-            spaceMonitors.forEach { NSEvent.removeMonitor($0) }
-            spaceMonitors.removeAll()
-        }
-    }
-
-    private func setSpeaking(_ speaking: Bool) {
-        updateSpaceMonitor(active: speaking)
-        guard let button = statusItem.button else { return }
-        if speaking {
-            setMenuSpinner(false)
-            button.image = statusImage(symbol: "speaker.wave.2.fill", tinted: true)
-        } else if lastState == .idle {
-            button.image = statusImage(symbol: "mic.circle", tinted: false)
-        }
-    }
-
     private func setState(_ state: DictationController.State) {
-        lastState = state
         guard let button = statusItem.button else { return }
         switch state {
         case .idle:
@@ -215,7 +154,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.controller = controller
                     Log.write("engine loaded in \(String(format: "%.1f", Date().timeIntervalSince(start)))s, encoder: \(engine.encoderBackend)")
                     self.setMenuSpinner(false)
-                    self.setupReadAloud()
                     controller.warmUp()
                     self.startHotkeyIfPossible()
                 }

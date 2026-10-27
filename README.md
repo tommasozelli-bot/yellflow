@@ -41,23 +41,26 @@ Toggle **Yell Flow** on in each list. You may need to quit and reopen the app on
 While recording, a floating **pill with a live waveform** appears at the bottom of the
 screen (visible even over full-screen apps), so you always know it's listening.
 
-**Read aloud** — select any text in any app:
-- **Double-tap Right ⌥** (two quick taps) → Yell Flow reads the selection out loud.
-- It detects the language automatically: Italian text gets an Italian voice, English an
-  English one. A single tap while it speaks stops it.
+A quick double tap cancels the recording it just opened.
 
-Click the menu-bar mic icon to switch **Language (Auto / EN / IT)** for dictation and the
-**Voice (F / M)** for read-aloud, see your **history**, or quit. **Auto** detects the spoken
+Click the menu-bar mic icon to switch **Language (Auto / EN / IT)** for dictation, browse
+your **history** (what you dictated, what you copied), or quit. **Auto** detects the spoken
 language from the audio; picking EN or IT just tells the model what to expect — mixed-in
 words from the other language are still transcribed as heard.
 
-## History (never lose a dictation)
+## History (never lose a dictation, never lose a copy)
 
-Every transcription is saved locally. Sometimes the focus is stolen (a desktop click, a
-slow app) and the typed text doesn't land where you wanted — open the menu-bar widget and
-you'll find your recent dictations under **History**. Click any entry to copy it back to
-the clipboard. History is local only, capped to the most recent entries, and never leaves
-your Mac.
+The widget's **History** has two tabs:
+
+- **Dictated**: every transcription, saved piece by piece *while you're still talking*,
+  so not even a crash or a stolen focus can lose it.
+- **Copied**: everything you copy, in any app (text, and file paths when you copy files).
+  Passwords from password managers are skipped (they mark their copies as concealed).
+
+Click any entry to copy it back to the clipboard. The list shows the latest 100; **Open all**
+opens the whole history as a text file. Nothing is ever trimmed, everything stays local
+(`~/Library/Application Support/YellFlow/history.json` and `clipboard.json`) and never
+leaves your Mac.
 
 ## Personalizing accuracy — the two context files (important)
 
@@ -158,8 +161,8 @@ repo as the prebuilt `vendor/whisper.xcframework` (Metal-enabled, universal).
 `WhisperEngine` (whisper.cpp wrapper, beam search, cheap language detection),
 `AudioChunker` (cuts long takes at pauses), `DictationController` (gesture/state machine,
 streaming pieces, warm-up), `RecordingIndicator` (waveform pill), `WidgetView` (menu-bar
-popover + history), `Vocabulary`/`Corrections`/`TranscriptStore` (the context and history
-layers), `WavWriter` (keeps the last recording for replays).
+popover + history), `Vocabulary`/`Corrections` (the context layer), `HistoryStore` +
+`ClipboardHistory` (dictation and clipboard history), `WavWriter` (keeps the last recording for replays).
 
 **Self-test / benchmark** (no permissions needed): `YellFlow --model M.bin --wav A.wav
 [--lang auto|it|en]` transcribes a file twice and prints cold/warm timings.

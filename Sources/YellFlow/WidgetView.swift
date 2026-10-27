@@ -1,8 +1,9 @@
 import AppKit
 
 /// The popover widget, styled after the Gemini mockup: dark card, monospaced
-/// yellow title, hairline separators, yellow icons. Functionality is unchanged —
-/// IT/EN toggle, a permissions nudge when needed, and Quit. All copy is bilingual.
+/// yellow title, hairline separators, yellow icons. Language toggle, a
+/// permissions nudge when needed, the history (what was dictated / what was
+/// copied, click to copy again) and Quit. All copy is bilingual.
 final class WidgetViewController: NSViewController {
 
     var onLanguageChange: ((String) -> Void)?
@@ -11,15 +12,15 @@ final class WidgetViewController: NSViewController {
     private let howtoLabel = NSTextField(wrappingLabelWithString: "")
     private let languageCaption = NSTextField(labelWithString: "")
     private let languageControl = NSSegmentedControl(labels: ["Auto", "EN", "IT"], trackingMode: .selectOne, target: nil, action: nil)
-    private let voiceCaption = NSTextField(labelWithString: "")
-    private let voiceControl = NSSegmentedControl(labels: ["F", "M"], trackingMode: .selectOne, target: nil, action: nil)
+    private let historyCaption = NSTextField(labelWithString: "")
+    private let historyControl = NSSegmentedControl(labels: ["", ""], trackingMode: .selectOne, target: nil, action: nil)
     private let permissionRow = NSStackView()
     private let permissionLabel = NSTextField(labelWithString: "")
     private let permissionButton = NSButton(title: "", target: nil, action: nil)
-    private let historyTitle = NSTextField(labelWithString: "")
     private let historyScroll = NSScrollView()
     private let historyStack = NSStackView()
     private let historyEmptyLabel = NSTextField(labelWithString: "")
+    private let openAllButton = NSButton(title: "", target: nil, action: nil)
     private let quitButton = NSButton(title: "", target: nil, action: nil)
 
     override func loadView() {
@@ -58,21 +59,21 @@ final class WidgetViewController: NSViewController {
         langRow.spacing = 8
         langRow.alignment = .centerY
 
-        voiceCaption.font = .systemFont(ofSize: 13, weight: .medium)
-        voiceCaption.textColor = .yellFlowText
-        voiceControl.target = self
-        voiceControl.action = #selector(voiceChanged)
-        voiceControl.selectedSegment = (Preferences.voiceGender == "m") ? 1 : 0
-        voiceControl.appearance = NSAppearance(named: .darkAqua)
+        historyCaption.font = .systemFont(ofSize: 13, weight: .medium)
+        historyCaption.textColor = .yellFlowText
+        historyControl.target = self
+        historyControl.action = #selector(historyTabChanged)
+        historyControl.selectedSegment = showingClipboard ? 1 : 0
+        historyControl.appearance = NSAppearance(named: .darkAqua)
         if #available(macOS 10.13, *) {
-            voiceControl.selectedSegmentBezelColor = .yellFlow
+            historyControl.selectedSegmentBezelColor = .yellFlow
         }
-        let voiceSpacer = NSView()
-        voiceSpacer.setContentHuggingPriority(.init(1), for: .horizontal)
-        let voiceRow = NSStackView(views: [icon("speaker.wave.2"), voiceCaption, voiceSpacer, voiceControl])
-        voiceRow.orientation = .horizontal
-        voiceRow.spacing = 8
-        voiceRow.alignment = .centerY
+        let historySpacer = NSView()
+        historySpacer.setContentHuggingPriority(.init(1), for: .horizontal)
+        let historyHeader = NSStackView(views: [icon("clock.arrow.circlepath"), historyCaption, historySpacer, historyControl])
+        historyHeader.orientation = .horizontal
+        historyHeader.spacing = 8
+        historyHeader.alignment = .centerY
 
         permissionLabel.font = .systemFont(ofSize: 11)
         permissionLabel.textColor = NSColor.systemOrange
@@ -86,9 +87,6 @@ final class WidgetViewController: NSViewController {
         permissionRow.spacing = 4
         permissionRow.addArrangedSubview(permissionLabel)
         permissionRow.addArrangedSubview(permissionButton)
-
-        historyTitle.font = .systemFont(ofSize: 13, weight: .medium)
-        historyTitle.textColor = .yellFlowText
 
         historyStack.orientation = .vertical
         historyStack.alignment = .leading
@@ -113,6 +111,12 @@ final class WidgetViewController: NSViewController {
             historyStack.widthAnchor.constraint(equalTo: clip.widthAnchor)
         ])
 
+        openAllButton.target = self
+        openAllButton.action = #selector(openAll)
+        openAllButton.isBordered = false
+        openAllButton.imagePosition = .imageLeading
+        openAllButton.image = symbol("doc.text")
+
         quitButton.target = self
         quitButton.action = #selector(quit)
         quitButton.isBordered = false
@@ -121,8 +125,8 @@ final class WidgetViewController: NSViewController {
         quitButton.font = .systemFont(ofSize: 13, weight: .medium)
 
         let stack = NSStackView(views: [
-            titleLabel, hairline(), howtoLabel, langRow, voiceRow, permissionRow,
-            hairline(), historyTitle, historyScroll, hairline(), quitButton
+            titleLabel, hairline(), howtoLabel, langRow, permissionRow,
+            hairline(), historyHeader, historyScroll, openAllButton, hairline(), quitButton
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -136,9 +140,9 @@ final class WidgetViewController: NSViewController {
             stack.topAnchor.constraint(equalTo: view.topAnchor),
             stack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             langRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
-            voiceRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
+            historyHeader.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
             historyScroll.widthAnchor.constraint(equalToConstant: 236),
-            historyScroll.heightAnchor.constraint(equalToConstant: 160)
+            historyScroll.heightAnchor.constraint(equalToConstant: 220)
         ])
 
         applyLanguage()
@@ -161,14 +165,27 @@ final class WidgetViewController: NSViewController {
         refreshHistory()
     }
 
+    private var showingClipboard: Bool { Preferences.historyTab == "copied" }
+    private var store: HistoryStore { showingClipboard ? .clipboard : .dictations }
+
     /// Rebuild the history list from the persistent store (most recent first).
-    /// Cleared and reconstructed each time so it never shows stale rows.
+    /// Cleared and reconstructed each time so it never shows stale rows. The
+    /// list shows the latest 100; "Open all" has everything.
     private func refreshHistory() {
         historyStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
 
-        let entries = TranscriptStore.recent(limit: 50)
+        let total = store.count
+        let all = isItalian ? "Apri tutto" : "Open all"
+        setTitle(openAllButton, total > 0 ? "\(all) (\(total))" : all)
+        openAllButton.isEnabled = total > 0
+
+        let entries = store.recent(limit: 100)
         if entries.isEmpty {
-            historyEmptyLabel.stringValue = isItalian ? "Nessuna trascrizione ancora" : "No transcriptions yet"
+            if showingClipboard {
+                historyEmptyLabel.stringValue = isItalian ? "Ancora niente di copiato" : "Nothing copied yet"
+            } else {
+                historyEmptyLabel.stringValue = isItalian ? "Nessuna trascrizione ancora" : "No transcriptions yet"
+            }
             historyStack.addArrangedSubview(historyEmptyLabel)
             historyEmptyLabel.widthAnchor.constraint(equalTo: historyStack.widthAnchor).isActive = true
             return
@@ -192,25 +209,32 @@ final class WidgetViewController: NSViewController {
 
     private func applyLanguage() {
         if isItalian {
-            howtoLabel.stringValue = "Tocca ⌥ destro: registra. Altro tocco: stop,\nil testo appare al cursore.\nDoppio tocco con testo selezionato: lo legge."
+            howtoLabel.stringValue = "Tocca ⌥ destro: registra. Altro tocco: stop,\nil testo appare al cursore."
             languageCaption.stringValue = "Lingua"
-            voiceCaption.stringValue = "Voce"
-            historyTitle.stringValue = "Cronologia"
+            historyCaption.stringValue = "Cronologia"
+            historyControl.setLabel("Dettati", forSegment: 0)
+            historyControl.setLabel("Copiati", forSegment: 1)
             permissionButton.title = "Apri Impostazioni"
             quitButton.title = "Esci"
         } else {
-            howtoLabel.stringValue = "Tap Right ⌥: record. Tap again: stop,\ntext lands at your cursor.\nDouble-tap with text selected: hear it aloud."
+            howtoLabel.stringValue = "Tap Right ⌥: record. Tap again: stop,\ntext lands at your cursor."
             languageCaption.stringValue = "Language"
-            voiceCaption.stringValue = "Voice"
-            historyTitle.stringValue = "History"
+            historyCaption.stringValue = "History"
+            historyControl.setLabel("Dictated", forSegment: 0)
+            historyControl.setLabel("Copied", forSegment: 1)
             permissionButton.title = "Open Settings"
             quitButton.title = "Quit"
         }
-        quitButton.attributedTitle = NSAttributedString(
-            string: "  " + quitButton.title,
+        setTitle(quitButton, quitButton.title)
+        refreshPermissions()
+    }
+
+    private func setTitle(_ button: NSButton, _ title: String) {
+        button.title = title
+        button.attributedTitle = NSAttributedString(
+            string: "  " + title,
             attributes: [.foregroundColor: NSColor.yellFlowText, .font: NSFont.systemFont(ofSize: 13, weight: .medium)]
         )
-        refreshPermissions()
     }
 
     // MARK: - Actions
@@ -224,8 +248,20 @@ final class WidgetViewController: NSViewController {
         onLanguageChange?(lang)
     }
 
-    @objc private func voiceChanged() {
-        Preferences.voiceGender = voiceControl.selectedSegment == 1 ? "m" : "f"
+    @objc private func historyTabChanged() {
+        Preferences.historyTab = historyControl.selectedSegment == 1 ? "copied" : "dictated"
+        refreshHistory()
+    }
+
+    /// The whole history (not just the latest 100) as a text file in TextEdit.
+    @objc private func openAll() {
+        let title: String
+        if showingClipboard {
+            title = isItalian ? "Cronologia appunti" : "Clipboard history"
+        } else {
+            title = isItalian ? "Cronologia dettati" : "Dictation history"
+        }
+        NSWorkspace.shared.open(store.exportText(title: title))
     }
 
     @objc private func openSettings() {
@@ -285,14 +321,14 @@ private final class HistoryRow: NSView {
     private let previewLabel = NSTextField(wrappingLabelWithString: "")
     private var restoreWork: DispatchWorkItem?
 
-    init(entry: TranscriptStore.Entry, italian: Bool) {
+    init(entry: HistoryStore.Entry, italian: Bool) {
         self.full = entry.text
         self.italian = italian
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
 
         let df = DateFormatter()
-        df.dateFormat = "HH:mm"
+        df.dateFormat = Calendar.current.isDateInToday(entry.date) ? "HH:mm" : "dd/MM HH:mm"
         timeLabel.stringValue = df.string(from: entry.date)
         timeLabel.font = .yellFlowMono(10, .regular)
         timeLabel.textColor = .yellFlowDim
