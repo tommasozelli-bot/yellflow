@@ -8,7 +8,7 @@ set -euo pipefail
 
 APP_NAME="Yell Flow"
 BUNDLE_ID="com.yellflow.app"
-VERSION="2.2"
+VERSION="2.3"
 MIN_OS="13.3"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

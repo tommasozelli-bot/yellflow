@@ -4,8 +4,7 @@ import Foundation
 
 /// Wires the engine together. Gestures (presses of the hotkey, releases are ignored):
 ///   single tap        -> start recording; next tap stops it and transcribes
-///   quick double tap  -> read the selected text aloud
-///   any tap while the synthetic voice is speaking -> stop it
+///   quick double tap  -> cancels the recording it just opened
 final class DictationController {
 
     enum State {
@@ -16,15 +15,6 @@ final class DictationController {
 
     /// Called on the main thread — hook the menu-bar UI here.
     var onStateChange: ((State) -> Void)?
-    /// Quick double tap of the hotkey — read-aloud trigger.
-    var onReadAloud: (() -> Void)?
-    /// Fired right before the microphone opens (used to stop any ongoing speech
-    /// so the mic doesn't transcribe our own synthetic voice).
-    var onRecordingWillStart: (() -> Void)?
-    /// Read-aloud state, provided by the owner: a tap while speaking only stops
-    /// the voice instead of starting a recording.
-    var isSpeechActive: (() -> Bool)?
-    var onStopSpeech: (() -> Void)?
     /// Live microphone RMS level (0…1), forwarded from the recorder to drive the UI waveform.
     var onLevel: ((Float) -> Void)?
     var language: String
@@ -35,7 +25,32 @@ final class DictationController {
     private let transcribeQueue = DispatchQueue(label: "yellflow.transcribe", qos: .userInitiated)
     private var isRecording = false
     private var recordingStartedAt = Date.distantPast
+    private var recordingStoppedAt = Date.distantPast
     private var lastPress = Date.distantPast
+
+    /// One recording, from the tap that opens the mic to its pasted text. Its
+    /// pieces and its result belong to it alone: a new take starting while this
+    /// one is still transcribing can no longer throw its text away (Oct 2026:
+    /// a 9-minute dictation was lost exactly like that). Touched on main only.
+    private final class Take {
+        let id: Int
+        let historyId = UUID()
+        let startedAt = Date()
+        var chunkCount = 0
+        var texts: [Int: String] = [:]
+        /// Cancelled by a quick double tap: nothing was meant to be said.
+        var discarded = false
+        init(id: Int) { self.id = id }
+
+        /// The text so far, pieces in order, cleaned and corrected.
+        var text: String {
+            let raw = (0..<chunkCount).compactMap { texts[$0] }.filter { !$0.isEmpty }.joined(separator: " ")
+            // TextCleanup tidies the edges; Corrections then guarantees the spelling
+            // of recurring names/jargon (proper nouns, pull request…) from corrections.txt.
+            return Corrections.apply(TextCleanup.clean(raw))
+        }
+    }
+    private var take = Take(id: 0)
 
     // Streaming transcription: long takes are cut at pauses while the user is
     // still talking and each piece goes to Whisper right away, so at the final
@@ -44,10 +59,8 @@ final class DictationController {
     private var pending: [Float] = []
     /// The whole take, kept only to write last-recording.wav.
     private var wholeTake: [Float] = []
-    /// Bumped at every new take; results from an older take are discarded.
+    /// Bumped at every new take (keys the detected language).
     private var takeId = 0
-    private var chunkCount = 0
-    private var chunkTexts: [Int: String] = [:]
     /// Language detected for the current take (only touched on the transcribe
     /// queue). Detection is fired in the background 8 s into the recording, so
     /// it's done by the time the user taps stop; takes too short for that reuse
@@ -73,7 +86,8 @@ final class DictationController {
         return dir.appendingPathComponent("last-recording.wav")
     }()
 
-    /// Second press within this window = double tap (read-aloud).
+    /// Second press within this window = double tap: cancels a take just
+    /// opened, and is ignored right after a stop (it would open an empty take).
     private let doubleTapWindow: TimeInterval = 0.40
     /// A single physical press can emit repeated flagsChanged events — ignore
     /// anything faster than a human can tap twice.
@@ -134,24 +148,17 @@ final class DictationController {
         guard now.timeIntervalSince(lastPress) > bounceGuard else { return }
         lastPress = now
 
-        // Reading aloud? A tap just silences it.
-        if isSpeechActive?() == true {
-            onStopSpeech?()
-            Log.write("press: stopped read-aloud")
-            return
-        }
-
         if isRecording {
             if now.timeIntervalSince(recordingStartedAt) < doubleTapWindow {
-                // Double tap: the first press opened the mic by mistake —
-                // discard it and read the selection instead.
+                // Double tap: the first press opened the mic by mistake.
                 discardTake()
                 onStateChange?(.idle)
-                Log.write("double tap — read-aloud")
-                onReadAloud?()
+                Log.write("double tap — recording cancelled")
             } else {
                 finishRecording()
             }
+        } else if now.timeIntervalSince(recordingStoppedAt) < doubleTapWindow {
+            Log.write("press right after a stop — ignored")
         } else {
             beginRecording()
         }
@@ -166,15 +173,13 @@ final class DictationController {
             return
         }
         do {
-            onRecordingWillStart?()
             try recorder.start()
             isRecording = true
             recordingStartedAt = Date()
             takeId += 1
+            take = Take(id: takeId)
             pending.removeAll(keepingCapacity: true)
             wholeTake.removeAll(keepingCapacity: true)
-            chunkCount = 0
-            chunkTexts.removeAll()
             detectionEnqueued = false
             onStateChange?(.recording)
             Log.write("recording started")
@@ -219,22 +224,25 @@ final class DictationController {
     }
 
     private func enqueueChunk(_ piece: [Float]) {
-        let index = chunkCount
-        let take = takeId
-        chunkCount += 1
+        let take = self.take
+        let index = take.chunkCount
+        take.chunkCount += 1
         let seconds = Double(piece.count) / 16_000
         transcribeQueue.async { [weak self] in
             guard let self else { return }
             let start = Date()
             var lang = self.language
-            if lang == "auto" { lang = self.languageByTake[take] ?? self.stickyLanguage ?? "auto" }
+            if lang == "auto" { lang = self.languageByTake[take.id] ?? self.stickyLanguage ?? "auto" }
             let raw = autoreleasepool {
                 self.engine.transcribeWindow(samples: piece, language: lang, vocabulary: Vocabulary.prompt())
             }
             Log.write("chunk \(index + 1) (\(String(format: "%.1f", seconds))s) transcribed in \(String(format: "%.1f", Date().timeIntervalSince(start)))s: \"\(raw)\"")
             DispatchQueue.main.async {
-                guard take == self.takeId else { return } // a discarded take
-                self.chunkTexts[index] = raw
+                guard !take.discarded else { return }
+                take.texts[index] = raw
+                // Saved while the user is still talking: whatever happens next
+                // (crash, quit, focus stolen), the text is in the history.
+                HistoryStore.dictations.upsert(id: take.historyId, date: take.startedAt, text: take.text)
             }
         }
     }
@@ -244,7 +252,7 @@ final class DictationController {
         chunkTimer = nil
         _ = recorder.stop()
         isRecording = false
-        takeId += 1 // orphan any chunk still in flight
+        take.discarded = true // orphan any chunk still in flight
         pending.removeAll()
         wholeTake.removeAll()
     }
@@ -252,6 +260,7 @@ final class DictationController {
     private func finishRecording() {
         guard isRecording else { return }
         isRecording = false
+        recordingStoppedAt = Date()
         chunkTimer?.invalidate()
         chunkTimer = nil
         let tail = recorder.stop()
@@ -259,7 +268,7 @@ final class DictationController {
         wholeTake.append(contentsOf: tail)
         let total = wholeTake.count
         let seconds = Double(total) / 16_000
-        Log.write("recorded \(total) samples (\(String(format: "%.1f", seconds))s), \(chunkCount) piece(s) already sent")
+        Log.write("recorded \(total) samples (\(String(format: "%.1f", seconds))s), \(take.chunkCount) piece(s) already sent")
 
         // Nothing meaningful was said — back to idle without spinning up Whisper.
         guard total >= 6_400 else { // 0.4 s
@@ -287,7 +296,7 @@ final class DictationController {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + max(30.0, seconds * 2.0), execute: watchdog)
 
-        let take = takeId
+        let take = self.take
         let start = Date()
         transcribeQueue.async { [weak self] in
             DispatchQueue.main.async {
@@ -297,14 +306,8 @@ final class DictationController {
                 // A new recording may have started while we were transcribing —
                 // don't yank its UI back to idle.
                 if !self.isRecording { self.onStateChange?(.idle) }
-                guard take == self.takeId else { return }
-                let raw = (0..<self.chunkCount)
-                    .compactMap { self.chunkTexts[$0] }
-                    .filter { !$0.isEmpty }
-                    .joined(separator: " ")
-                // TextCleanup tidies the edges; Corrections then guarantees the spelling
-                // of recurring names/jargon (proper nouns, pull request…) from corrections.txt.
-                let text = Corrections.apply(TextCleanup.clean(raw))
+                // This take's own text, even if a newer take is already recording.
+                let text = take.text
                 Log.write("transcribed in \(String(format: "%.1f", Date().timeIntervalSince(start)))s after the tap: \"\(text)\"")
                 guard !text.isEmpty else {
                     Log.write("empty transcript — nothing to paste")
@@ -312,7 +315,7 @@ final class DictationController {
                 }
                 // Save to history BEFORE pasting: inject() has no success signal, so
                 // if the focus was stolen the text stays recoverable from the widget.
-                TranscriptStore.add(text)
+                HistoryStore.dictations.upsert(id: take.historyId, date: take.startedAt, text: text)
                 TextInjector.inject(text)
                 Log.write("pasted \(text.count) characters")
             }

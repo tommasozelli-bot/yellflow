@@ -66,6 +66,8 @@ enum TextInjector {
                     any = true
                 }
             }
+            // Putting it back isn't a new copy: keep it out of clipboard histories.
+            if any { copy.setData(Data(), forType: transientType) }
             return any ? copy : nil
         }
     }

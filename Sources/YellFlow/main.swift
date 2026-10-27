@@ -5,26 +5,6 @@ import Foundation
 // Entry point.
 //   YellFlow                             -> launch the menu-bar widget (packaged app)
 //   YellFlow --model M.bin --wav A.wav   -> offline self-test, no permissions needed
-//   YellFlow --speak "text" [--gender m|f] -> read-aloud self-test (no model needed)
-
-// MARK: - Read-aloud self-test (runs before anything else; needs no model)
-
-if let speakIdx = CommandLine.arguments.firstIndex(of: "--speak"), speakIdx + 1 < CommandLine.arguments.count {
-    let cli = CommandLine.arguments
-    if let gIdx = cli.firstIndex(of: "--gender"), gIdx + 1 < cli.count {
-        Preferences.voiceGender = cli[gIdx + 1]
-    }
-    let speech = SpeechEngine()
-    var finished = false
-    speech.onStateChange = { speaking in if !speaking { finished = true } }
-    speech.speak(cli[speakIdx + 1], fallbackLanguage: "en")
-    let deadline = Date().addingTimeInterval(60)
-    while !finished && Date() < deadline {
-        RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.1))
-    }
-    print(finished ? "spoke OK (see log for voice/language)" : "⏱️ speech did not finish")
-    exit(finished ? 0 : 1)
-}
 
 // MARK: - Offline self-test helpers
 
