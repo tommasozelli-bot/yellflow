@@ -19,7 +19,7 @@ final class DictationController {
     var onLevel: ((Float) -> Void)?
     var language: String
 
-    private let engine: WhisperEngine
+    private let engine: SpeechEngine
     private let recorder = AudioRecorder()
     private let hotkey: HotkeyManager
     private let transcribeQueue = DispatchQueue(label: "yellflow.transcribe", qos: .userInitiated)
@@ -93,7 +93,7 @@ final class DictationController {
     /// anything faster than a human can tap twice.
     private let bounceGuard: TimeInterval = 0.12
 
-    init(engine: WhisperEngine, language: String = "auto", hotkeyCode: CGKeyCode = 61) {
+    init(engine: SpeechEngine, language: String = "auto", hotkeyCode: CGKeyCode = 61) {
         self.engine = engine
         self.language = language
         self.hotkey = HotkeyManager(keyCode: hotkeyCode)
@@ -115,8 +115,8 @@ final class DictationController {
             // Noise with the gate off: the VAD would (rightly) skip it as non-speech.
             var noise = [Float](repeating: 0, count: 17_600)
             for i in 0..<noise.count { noise[i] = Float.random(in: -0.02...0.02) }
-            _ = autoreleasepool { self.engine.transcribeWindow(samples: noise, language: self.language, gate: false) }
-            Log.write("engine warmed up in \(String(format: "%.1f", Date().timeIntervalSince(start)))s")
+            _ = autoreleasepool { self.engine.transcribeWindow(samples: noise, language: self.language, vocabulary: nil, gate: false) }
+            Log.write("\(self.engine.name) warmed up in \(String(format: "%.1f", Date().timeIntervalSince(start)))s")
         }
     }
 

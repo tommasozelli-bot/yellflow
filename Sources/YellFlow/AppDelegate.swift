@@ -9,7 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let widget = WidgetViewController()
     private let indicator = RecordingIndicator()
 
-    private var engine: WhisperEngine?
+    private var engine: SpeechEngine?
     private var controller: DictationController?
     private var hotkeyActive = false
 
@@ -112,6 +112,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.controller?.language = lang
             Log.write("language set to \(lang)")
         }
+        widget.onEngineChange = { [weak self] kind in
+            Log.write("engine set to \(kind.rawValue)")
+            self?.reloadEngine()
+        }
         popover.contentViewController = widget
         popover.behavior = .transient
         popover.appearance = NSAppearance(named: .darkAqua) // dark card + arrow
@@ -134,8 +138,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Loads the model off the main thread: with the Core ML encoder the very
     /// first launch compiles it (~45 s) and the menu bar must not freeze. The
     /// spinner shows until the engine is ready; hotkey and warm-up follow.
+    /// Parakeet is the default; without its model the app falls back to Whisper.
     private func loadEngine() {
-        guard let path = modelPath() else {
+        var kind = Preferences.engine
+        if kind == .parakeet && parakeetModelPath() == nil {
+            Log.write("⚠️ Parakeet model not found — using Whisper")
+            kind = .whisper
+        }
+        guard let path = kind == .parakeet ? parakeetModelPath() : modelPath() else {
             showFatal("Model not found",
                       "whisper-model.bin is missing from the app bundle. Rebuild with build.sh.")
             return
@@ -144,7 +154,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let start = Date()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
-                let engine = try WhisperEngine(modelPath: path)
+                let engine: SpeechEngine
+                let detail: String
+                if kind == .parakeet {
+                    let parakeet = try ParakeetEngine(modelPath: path)
+                    (engine, detail) = (parakeet, "backend: \(parakeet.backend)")
+                } else {
+                    let whisper = try WhisperEngine(modelPath: path)
+                    (engine, detail) = (whisper, "encoder: \(whisper.encoderBackend)")
+                }
                 DispatchQueue.main.async {
                     guard let self else { return }
                     self.engine = engine
@@ -152,7 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     controller.onStateChange = { [weak self] state in self?.setState(state) }
                     controller.onLevel = { [weak self] rms in self?.indicator.updateLevel(rms) }
                     self.controller = controller
-                    Log.write("engine loaded in \(String(format: "%.1f", Date().timeIntervalSince(start)))s, encoder: \(engine.encoderBackend)")
+                    Log.write("\(engine.name) loaded in \(String(format: "%.1f", Date().timeIntervalSince(start)))s, \(detail)")
                     self.setMenuSpinner(false)
                     controller.warmUp()
                     self.startHotkeyIfPossible()
@@ -164,6 +182,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+    }
+
+    /// The engine picked in the widget: the old one is released first, so the
+    /// two models are never in memory together (8 GB Macs).
+    private func reloadEngine() {
+        controller?.stop()
+        controller = nil
+        engine = nil
+        hotkeyActive = false
+        setState(.idle)
+        loadEngine()
     }
 
     private func startHotkeyIfPossible() {
@@ -185,6 +214,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // "ggml-small" kept as fallback for bundles built before the rename.
         return Bundle.main.url(forResource: "whisper-model", withExtension: "bin")?.path
             ?? Bundle.main.url(forResource: "ggml-small", withExtension: "bin")?.path
+    }
+
+    /// Bundled as parakeet-model.gguf; YELLFLOW_PARAKEET_MODEL overrides it, and
+    /// a copy downloaded into Application Support/YellFlow/models works too.
+    private func parakeetModelPath() -> String? {
+        if let override = ProcessInfo.processInfo.environment["YELLFLOW_PARAKEET_MODEL"], !override.isEmpty {
+            return override
+        }
+        if let bundled = Bundle.main.url(forResource: "parakeet-model", withExtension: "gguf")?.path {
+            return bundled
+        }
+        let downloaded = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("YellFlow/models/parakeet-ultra-Q8_0.gguf").path
+        return FileManager.default.fileExists(atPath: downloaded) ? downloaded : nil
     }
 
     private func showFatal(_ title: String, _ message: String) {
