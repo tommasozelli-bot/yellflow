@@ -5,8 +5,13 @@ import Foundation
 // Entry point.
 //   YellFlow                             -> launch the menu-bar widget (packaged app)
 //   YellFlow --model M.bin --wav A.wav   -> offline self-test, no permissions needed
+//                                           (a .gguf model runs Parakeet, a .bin Whisper)
 
 // MARK: - Offline self-test helpers
+
+func makeEngine(modelPath: String) throws -> SpeechEngine {
+    modelPath.hasSuffix(".gguf") ? try ParakeetEngine(modelPath: modelPath) : try WhisperEngine(modelPath: modelPath)
+}
 
 func loadAudioFileAs16kMono(url: URL) throws -> [Float] {
     let file = try AVAudioFile(forReading: url)
@@ -46,7 +51,8 @@ func loadAudioFileAs16kMono(url: URL) throws -> [Float] {
 func runSelfTest(modelPath: String, wavPath: String, language: String, background: Bool) -> Never {
     func work() -> Int32 {
         do {
-            let engine = try WhisperEngine(modelPath: modelPath)
+            let engine = try makeEngine(modelPath: modelPath)
+            print("Engine: \(engine.name)")
             let samples = try loadAudioFileAs16kMono(url: URL(fileURLWithPath: wavPath))
             print("Loaded \(samples.count) samples (\(String(format: "%.1f", Double(samples.count) / 16_000))s)")
             var raw = ""
@@ -66,7 +72,7 @@ func runSelfTest(modelPath: String, wavPath: String, language: String, backgroun
 
     // Faithfully mirror the GUI: engine created on MAIN, transcription on a background
     // queue while a run loop spins on main.
-    guard let engine = try? WhisperEngine(modelPath: modelPath),
+    guard let engine = try? makeEngine(modelPath: modelPath),
           let samples = try? loadAudioFileAs16kMono(url: URL(fileURLWithPath: wavPath)) else {
         print("❌ setup failed"); exit(1)
     }
@@ -95,7 +101,7 @@ if let wavIdx = argv.firstIndex(of: "--wav"), wavIdx + 1 < argv.count {
     var model = ""
     if let mIdx = argv.firstIndex(of: "--model"), mIdx + 1 < argv.count { model = argv[mIdx + 1] }
     guard !model.isEmpty else {
-        print("Usage: YellFlow --model <ggml-model.bin> --wav <audio-file> [--lang auto|it|en]")
+        print("Usage: YellFlow --model <ggml-model.bin | parakeet.gguf> --wav <audio-file> [--lang auto|it|en]")
         exit(1)
     }
     var lang = "auto"

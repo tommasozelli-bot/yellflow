@@ -8,7 +8,7 @@ set -euo pipefail
 
 APP_NAME="Yell Flow"
 BUNDLE_ID="com.yellflow.app"
-VERSION="2.3"
+VERSION="2.4"
 MIN_OS="13.3"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,7 +31,16 @@ COREML_MIN_BYTES=1100000000
 # Whisper, which on silence writes "Grazie." / "Grazie a tutti".
 VAD_URL="https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin"
 VAD="$CACHE/ggml-silero-v5.1.2.bin"
+# Parakeet Ultra Q8_0 (~740 MB), the default engine since 2.4: ~10x faster than
+# Whisper on the user's own dictations. Pinned revision + checksum from Handy's
+# catalog (handy-computer/parakeet-ultra-gguf). YELLFLOW_PARAKEET=0 skips it.
+PARAKEET_URL="https://huggingface.co/handy-computer/parakeet-ultra-gguf/resolve/39eeb55181f0d354fd934f06e92fd8d5037fed8e/parakeet-ultra-Q8_0.gguf"
+PARAKEET="$CACHE/parakeet-ultra-Q8_0.gguf"
+PARAKEET_SHA256="007a59761e9258779f189df396b50d12b83bb5b79e66df4b955c230d2f2a0a59"
+# Downloaded there by hand on 31/10/2026: reused instead of fetched again.
+PARAKEET_LOCAL="$HOME/Library/Application Support/YellFlow/models/parakeet-ultra-Q8_0.gguf"
 FRAMEWORK_SRC="$HERE/vendor/whisper.xcframework/macos-arm64_x86_64/whisper.framework"
+TRANSCRIBE_LIB="$HERE/vendor/transcribe/lib/libtranscribe.dylib"
 
 echo "▸ 1/6  Compiling (release, universal arm64+x86_64)…"
 # No full Xcode here (CLT only), so SwiftPM's --arch multi-build is unavailable:
@@ -72,6 +81,24 @@ else
     echo "        cached: $VAD"
 fi
 
+echo "▸ 2d/6 Fetching Parakeet Ultra (~740 MB)…"
+if [[ "${YELLFLOW_PARAKEET:-1}" == "0" ]]; then
+    echo "        skipped (YELLFLOW_PARAKEET=0)"
+    PARAKEET=""
+else
+    if [[ ! -f "$PARAKEET" ]]; then
+        if [[ -f "$PARAKEET_LOCAL" ]]; then cp "$PARAKEET_LOCAL" "$PARAKEET"
+        else curl -L --fail -o "$PARAKEET" "$PARAKEET_URL"; fi
+    else
+        echo "        cached: $PARAKEET"
+    fi
+    if [[ "$(shasum -a 256 "$PARAKEET" | cut -d' ' -f1)" != "$PARAKEET_SHA256" ]]; then
+        echo "❌ Parakeet model checksum mismatch — deleting it, run build.sh again" >&2
+        rm -f "$PARAKEET"
+        exit 1
+    fi
+fi
+
 echo "▸ 3/6  Assembling app bundle…"
 APP="$STAGE/$APP_NAME.app"
 rm -rf "$STAGE" && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
@@ -81,6 +108,8 @@ cp "$MODEL" "$APP/Contents/Resources/whisper-model.bin"
 cp "$VAD" "$APP/Contents/Resources/whisper-vad.bin"
 [[ -n "$COREML_DIR" ]] && cp -R "$COREML_DIR" "$APP/Contents/Resources/whisper-model-encoder.mlmodelc"
 cp -R "$FRAMEWORK_SRC" "$APP/Contents/Frameworks/whisper.framework"
+cp "$TRANSCRIBE_LIB" "$APP/Contents/Frameworks/libtranscribe.dylib"
+[[ -n "$PARAKEET" ]] && cp "$PARAKEET" "$APP/Contents/Resources/parakeet-model.gguf"
 [[ -f "$HERE/assets/AppIcon.icns" ]] && cp "$HERE/assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -107,6 +136,9 @@ PLIST
 
 echo "▸ 4/6  Fixing rpath so the app finds its framework…"
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/YellFlow" 2>/dev/null || true
+# Package.swift adds vendor/transcribe/lib as an rpath for the self-test; the app
+# must only ever load the copy inside its own bundle.
+install_name_tool -delete_rpath "$HERE/vendor/transcribe/lib" "$APP/Contents/MacOS/YellFlow" 2>/dev/null || true
 
 echo "▸ 5/6  Code signing…"
 # Prefer the stable self-signed identity (see setup-signing.sh) so macOS permission
@@ -128,6 +160,7 @@ else
     echo "        ad-hoc (run ./setup-signing.sh once for persistent permissions)"
 fi
 codesign --force --sign "$SIGN_ID" --timestamp=none "$APP/Contents/Frameworks/whisper.framework"
+codesign --force --sign "$SIGN_ID" --timestamp=none "$APP/Contents/Frameworks/libtranscribe.dylib"
 codesign --force --sign "$SIGN_ID" --timestamp=none "$APP/Contents/MacOS/YellFlow"
 codesign --force --sign "$SIGN_ID" --timestamp=none "$APP"
 restore_keychain_list

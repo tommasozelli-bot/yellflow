@@ -47,12 +47,30 @@ enum Vocabulary {
 
     """
 
-    private static var cached: (prompt: String, modified: Date)?
+    private static var cached: (prompt: String, all: [String], modified: Date)?
     private static let lock = NSLock()
+
+    /// Below this heading the terms are for Parakeet only: Whisper's prompt is
+    /// full, while Parakeet's SoundAlike pass has no size limit.
+    private static func isParakeetHeading(_ line: String) -> Bool {
+        line.hasPrefix("## ") && line.lowercased().contains("parakeet")
+    }
 
     /// The comma-separated prompt built from the file, or nil when empty.
     /// Creates a commented starter file on first use.
     static func prompt() -> String? {
+        let prompt = load().prompt
+        return prompt.isEmpty ? nil : prompt
+    }
+
+    /// Every term in the file, Parakeet section included, plus the names on the
+    /// right of corrections.txt (canonical spellings, already curated): the
+    /// list SoundAlike matches Parakeet's output against.
+    static func allTerms() -> [String] {
+        load().all + Corrections.canonicalTerms()
+    }
+
+    private static func load() -> (prompt: String, all: [String]) {
         lock.lock()
         defer { lock.unlock() }
 
@@ -64,14 +82,19 @@ enum Vocabulary {
 
         let modified = (try? fm.attributesOfItem(atPath: fileURL.path)[.modificationDate] as? Date) ?? .distantPast
         if let cached, cached.modified == modified {
-            return cached.prompt.isEmpty ? nil : cached.prompt
+            return (cached.prompt, cached.all)
         }
 
         let raw = (try? String(contentsOf: fileURL, encoding: .utf8)) ?? ""
-        let terms = raw
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && !$0.hasPrefix("#") }
+        var terms: [String] = [], all: [String] = []
+        var parakeetOnly = false
+        for line in raw.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if isParakeetHeading(trimmed) { parakeetOnly = true; continue }
+            if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+            all.append(trimmed)
+            if !parakeetOnly { terms.append(trimmed) }
+        }
 
         // Keep the earliest terms and drop trailing ones that won't fit in the
         // ~224-token prompt window (estimated at maxPromptLength chars). Dropping
@@ -89,8 +112,8 @@ enum Vocabulary {
             Log.write("vocabulary: \(dropped) term(s) don't fit the ~\(maxPromptTokens)-token prompt and were dropped — move guaranteed fixes to corrections.txt")
         }
         let prompt = kept.joined(separator: ", ")
-        cached = (prompt, modified)
-        if !prompt.isEmpty { Log.write("vocabulary: \(terms.count) terms loaded") }
-        return prompt.isEmpty ? nil : prompt
+        cached = (prompt, all, modified)
+        if !all.isEmpty { Log.write("vocabulary: \(terms.count) terms for Whisper, \(all.count) for Parakeet") }
+        return (prompt, all)
     }
 }

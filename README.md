@@ -48,6 +48,21 @@ your **history** (what you dictated, what you copied), or quit. **Auto** detects
 language from the audio; picking EN or IT just tells the model what to expect — mixed-in
 words from the other language are still transcribed as heard.
 
+## Two engines
+
+The widget's **Engine** row picks the speech model. Both run on your Mac, offline.
+
+- **Parakeet** (default) — Parakeet Ultra, run by [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp),
+  the engine behind [Handy](https://github.com/cjpais/Handy). About ten times faster: on an
+  M3, 15 s of speech in 0.25 s and 77 s in 1.7 s, ~250 MB of memory, ready in under a
+  second. It writes its own punctuation. It can't take the vocabulary as a hint, so your
+  names are fixed *after* transcription (see below).
+- **Whisper** — `large-v3-turbo`. Slower (1–2 s per piece, more after an idle pause on an
+  8 GB Mac), ~800 MB, but it reads your vocabulary *before* it decodes, so it is the
+  safer pick when a dictation is full of names.
+
+Switching unloads one model before loading the other, so they are never in memory together.
+
 ## History (never lose a dictation, never lose a copy)
 
 The widget's **History** has two tabs:
@@ -78,6 +93,13 @@ uses them. No restart.
 it might otherwise miss (e.g. a surname, a product name). It's only a hint, and it must
 stay **short** — Whisper only keeps ~224 tokens of it, so list a handful of genuinely
 tricky words, not everything.
+
+With **Parakeet** the same terms are used afterwards: any run of words the model was
+unsure about (low token probability) that *sounds like* a term — compared on an
+Italian-ear phonetic key, so `gli El Flow` matches `Yell Flow` — is replaced by the term as
+you wrote it. Exact matches only fix the spelling. Here size doesn't matter, so a
+`## Solo Parakeet` heading starts a section Whisper skips: put there everything else you
+say often. The names on the right of `corrections.txt` count as vocabulary too.
 
 **`corrections.txt`** — one rule per line as `wrong => right`. Applied **after**
 transcription, so it's deterministic and **unlimited**: whatever the model writes, these
@@ -125,8 +147,8 @@ hides all of that behind the recording itself:
 
 ## Notes
 
-- 100% on-device (whisper.cpp, `large-v3-turbo` quantized model, ~550 MB). Works with
-  no internet.
+- 100% on-device (Parakeet Ultra Q8_0 ~740 MB through transcribe.cpp, or whisper.cpp
+  with `large-v3-turbo` ~550 MB). Works with no internet.
 - Text is pasted at the cursor (⌘V). Your clipboard is put back 1.5 s later, unless you
   copied something else in the meantime, and the dictation is marked transient so
   clipboard managers don't record it.
@@ -147,29 +169,42 @@ No Xcode required — Command Line Tools only. The app bundle is assembled by ha
 #    survive rebuilds — otherwise you'd re-grant Mic/Accessibility every build.
 bash setup-signing.sh
 
-# 2. build: compiles universal (arm64+x86_64), downloads the whisper model
-#    (~547 MB, cached in ~/.cache/yellflow), assembles "Yell Flow.app",
-#    installs it to /Applications, and writes dist/Yell Flow.zip
+# 2. build: compiles universal (arm64+x86_64), downloads the models
+#    (Whisper ~547 MB, Parakeet ~740 MB checksum-verified, cached in
+#    ~/.cache/yellflow), assembles "Yell Flow.app", installs it to
+#    /Applications, and writes dist/Yell Flow.zip
+#    (YELLFLOW_PARAKEET=0 or YELLFLOW_COREML=0 leave a model out)
 bash build.sh
 ```
 
 The whisper model is **not** committed — `build.sh` fetches
 `ggml-large-v3-turbo-q5_0` from Hugging Face on first build. `whisper.cpp` ships in the
-repo as the prebuilt `vendor/whisper.xcframework` (Metal-enabled, universal).
+repo as the prebuilt `vendor/whisper.xcframework` (Metal-enabled, universal), and
+transcribe.cpp as `vendor/transcribe/` (one universal `libtranscribe.dylib`, Metal on
+Apple Silicon, ggml linked inside with only `transcribe_*` exported so it can't clash with
+whisper's). `vendor/build-transcribe.sh` rebuilds it from a pinned commit; the app build
+never compiles C++.
 
 **Project layout:** `Sources/YellFlow/` — `AudioRecorder` (mic capture + live level),
-`WhisperEngine` (whisper.cpp wrapper, beam search, cheap language detection),
+`SpeechEngine` (the engine protocol, the shared Silero gate), `WhisperEngine` (whisper.cpp
+wrapper, beam search, cheap language detection), `ParakeetEngine` (transcribe.cpp wrapper),
+`SoundAlike` (vocabulary applied after Parakeet),
 `AudioChunker` (cuts long takes at pauses), `DictationController` (gesture/state machine,
 streaming pieces, warm-up), `RecordingIndicator` (waveform pill), `WidgetView` (menu-bar
 popover + history), `Vocabulary`/`Corrections` (the context layer), `HistoryStore` +
 `ClipboardHistory` (dictation and clipboard history), `WavWriter` (keeps the last recording for replays).
 
 **Self-test / benchmark** (no permissions needed): `YellFlow --model M.bin --wav A.wav
-[--lang auto|it|en]` transcribes a file twice and prints cold/warm timings.
+[--lang auto|it|en]` transcribes a file twice and prints cold/warm timings. A `.gguf`
+model runs Parakeet (`--model ".../Resources/parakeet-model.gguf"`), a `.bin` Whisper.
 `YELLFLOW_BEAM=n` overrides the beam size for experiments.
 
 ## Credits & license
 
-Speech recognition by [whisper.cpp](https://github.com/ggerganov/whisper.cpp) and
-[ggml](https://github.com/ggerganov/ggml) (MIT). Yell Flow is released under the MIT
+Speech recognition by [whisper.cpp](https://github.com/ggerganov/whisper.cpp),
+[transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) and
+[ggml](https://github.com/ggerganov/ggml) (MIT). The Parakeet Ultra model is by
+[Moondream](https://huggingface.co/moondream/parakeet-ultra), refined from NVIDIA's
+Parakeet TDT 0.6B v3, under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/);
+the GGUF conversion is by [handy-computer](https://huggingface.co/handy-computer/parakeet-ultra-gguf). Yell Flow is released under the MIT
 license — see [LICENSE](LICENSE).

@@ -73,6 +73,18 @@ enum Corrections {
         return result
     }
 
+    /// The names on the right of the rules ("Mobile Watt", "Informa Sistemi"…):
+    /// spellings already curated, reused as vocabulary for Parakeet. Only those
+    /// with a capital letter: "online" or "offline" are not names.
+    static func canonicalTerms() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        var seen = Set<String>()
+        return loadRules().map(\.right).filter { right in
+            right.contains(where: \.isUppercase) && seen.insert(right).inserted
+        }
+    }
+
     /// Reads and parses the rules, re-reading only when the file's mtime changes.
     /// Caller must hold `lock`.
     private static func loadRules() -> [(wrong: String, right: String)] {

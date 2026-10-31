@@ -8,3 +8,6 @@ dist/
 
 # Whisper model is downloaded by build.sh into ~/.cache/yellflow, never committed
 *.bin
+
+# Parakeet model, downloaded by build.sh into ~/.cache/yellflow
+*.gguf

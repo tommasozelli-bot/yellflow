@@ -1,17 +1,20 @@
 import AppKit
 
 /// The popover widget, styled after the Gemini mockup: dark card, monospaced
-/// yellow title, hairline separators, yellow icons. Language toggle, a
+/// yellow title, hairline separators, yellow icons. Language and engine toggles, a
 /// permissions nudge when needed, the history (what was dictated / what was
 /// copied, click to copy again) and Quit. All copy is bilingual.
 final class WidgetViewController: NSViewController {
 
     var onLanguageChange: ((String) -> Void)?
+    var onEngineChange: ((EngineKind) -> Void)?
 
     private let titleLabel = NSTextField(labelWithString: "Yell Flow")
     private let howtoLabel = NSTextField(wrappingLabelWithString: "")
     private let languageCaption = NSTextField(labelWithString: "")
     private let languageControl = NSSegmentedControl(labels: ["Auto", "EN", "IT"], trackingMode: .selectOne, target: nil, action: nil)
+    private let engineCaption = NSTextField(labelWithString: "")
+    private let engineControl = NSSegmentedControl(labels: ["Parakeet", "Whisper"], trackingMode: .selectOne, target: nil, action: nil)
     private let historyCaption = NSTextField(labelWithString: "")
     private let historyControl = NSSegmentedControl(labels: ["", ""], trackingMode: .selectOne, target: nil, action: nil)
     private let permissionRow = NSStackView()
@@ -58,6 +61,23 @@ final class WidgetViewController: NSViewController {
         langRow.orientation = .horizontal
         langRow.spacing = 8
         langRow.alignment = .centerY
+
+        // Parakeet: ~10x faster, names fixed afterwards. Whisper: slower, takes the vocabulary as a hint.
+        engineCaption.font = .systemFont(ofSize: 13, weight: .medium)
+        engineCaption.textColor = .yellFlowText
+        engineControl.target = self
+        engineControl.action = #selector(engineChanged)
+        engineControl.selectedSegment = Self.engines.firstIndex(of: Preferences.engine) ?? 0
+        engineControl.appearance = NSAppearance(named: .darkAqua)
+        if #available(macOS 10.13, *) {
+            engineControl.selectedSegmentBezelColor = .yellFlow
+        }
+        let engineSpacer = NSView()
+        engineSpacer.setContentHuggingPriority(.init(1), for: .horizontal)
+        let engineRow = NSStackView(views: [icon("waveform"), engineCaption, engineSpacer, engineControl])
+        engineRow.orientation = .horizontal
+        engineRow.spacing = 8
+        engineRow.alignment = .centerY
 
         historyCaption.font = .systemFont(ofSize: 13, weight: .medium)
         historyCaption.textColor = .yellFlowText
@@ -125,7 +145,7 @@ final class WidgetViewController: NSViewController {
         quitButton.font = .systemFont(ofSize: 13, weight: .medium)
 
         let stack = NSStackView(views: [
-            titleLabel, hairline(), howtoLabel, langRow, permissionRow,
+            titleLabel, hairline(), howtoLabel, langRow, engineRow, permissionRow,
             hairline(), historyHeader, historyScroll, openAllButton, hairline(), quitButton
         ])
         stack.orientation = .vertical
@@ -140,6 +160,7 @@ final class WidgetViewController: NSViewController {
             stack.topAnchor.constraint(equalTo: view.topAnchor),
             stack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             langRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
+            engineRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
             historyHeader.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -36),
             historyScroll.widthAnchor.constraint(equalToConstant: 236),
             historyScroll.heightAnchor.constraint(equalToConstant: 220)
@@ -211,6 +232,7 @@ final class WidgetViewController: NSViewController {
         if isItalian {
             howtoLabel.stringValue = "Tocca ⌥ destro: registra. Altro tocco: stop,\nil testo appare al cursore."
             languageCaption.stringValue = "Lingua"
+            engineCaption.stringValue = "Motore"
             historyCaption.stringValue = "Cronologia"
             historyControl.setLabel("Dettati", forSegment: 0)
             historyControl.setLabel("Copiati", forSegment: 1)
@@ -219,6 +241,7 @@ final class WidgetViewController: NSViewController {
         } else {
             howtoLabel.stringValue = "Tap Right ⌥: record. Tap again: stop,\ntext lands at your cursor."
             languageCaption.stringValue = "Language"
+            engineCaption.stringValue = "Engine"
             historyCaption.stringValue = "History"
             historyControl.setLabel("Dictated", forSegment: 0)
             historyControl.setLabel("Copied", forSegment: 1)
@@ -246,6 +269,15 @@ final class WidgetViewController: NSViewController {
         Preferences.language = lang
         applyLanguage()
         onLanguageChange?(lang)
+    }
+
+    private static let engines: [EngineKind] = [.parakeet, .whisper] // segment order
+
+    @objc private func engineChanged() {
+        let kind = Self.engines[max(0, min(engineControl.selectedSegment, Self.engines.count - 1))]
+        guard kind != Preferences.engine else { return }
+        Preferences.engine = kind
+        onEngineChange?(kind)
     }
 
     @objc private func historyTabChanged() {
